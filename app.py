@@ -30,44 +30,80 @@ def get_user_folder(user_id: int) -> str:
     os.makedirs(folder, exist_ok=True)
     return folder
 
+# ==================== أمر /start ====================
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    user = message.from_user
+    db.add_or_update_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
+    db.add_log(user.id, "start", "User started bot")
 
+    welcome_text = (
+        f"👋 أهلاً وسهلاً {user.first_name}!\n\n"
+        f"🤖 أنا بوت البحث المتقدم في الملفات النصية الكبيرة.\n\n"
+        f"📋 الأوامر المتاحة:\n"
+        f"/upload - طلب رفع ملف .txt\n"
+        f"/search (نص) - البحث في ملفاتك\n"
+        f"/myfiles - عرض ملفاتك المرفوعة\n"
+        f"/status - إحصائيات حسابك\n"
+        f"/help - المساعدة\n"
+        f"/upload_link - رفع ملف عبر رابط\n\n"
+        f"📎 طريقة الاستخدام:\n"
+        f"1. أرسل لي ملف .txt مباشرة أو استخدم /upload\n"
+        f"2. استخدم /search متبوعاً بالنص المطلوب\n"
+        f"3. سأرسل لك النتائج فوراً!"
+    )
+    await message.reply(welcome_text)
+
+# ==================== أمر /help ====================
 @dp.message(Command("help"))
 async def cmd_help(message: Message):
     db.increment_message_count(message.from_user.id)
     help_text = (
-        "📖 <b>دليل الاستخدام</b>\n\n"
-        "<b>📤 رفع ملف:</b>\n"
+        "📖 دليل الاستخدام\n\n"
+        "📤 رفع ملف:\n"
         "• أرسل ملف .txt مباشرة في المحادثة\n"
         "• أو اضغط /upload\n\n"
-        "<b>🔍 البحث:</b>\n"
+        "🔍 البحث:\n"
         "• /search النص_المطلوب\n"
-        "• مثال: <code>/search محمد أحمد</code>\n\n"
-        "<b>📂 إدارة الملفات:</b>\n"
+        "• مثال: /search محمد أحمد\n\n"
+        "📂 إدارة الملفات:\n"
         "• /myfiles - قائمة ملفاتك\n"
         "• /status - إحصائياتك الشخصية\n\n"
-        "<b>👨‍💼 للمشرفين:</b>\n"
+        "👨‍💼 للمشرفين:\n"
         "• /stats - إحصائيات البوت الكاملة"
     )
-    await message.reply(help_text, parse_mode=ParseMode.HTML)
+    await message.reply(help_text)
 
+# ==================== أمر /upload ====================
 @dp.message(Command("upload"))
 async def cmd_upload(message: Message):
     db.increment_message_count(message.from_user.id)
     await message.reply(
-        "📤 <b>جاهز لاستقبال ملفك!</b>\n\n"
-        "أرسل لي ملف نصي بصيغة <code>.txt</code>\n"
-        "✅ يمكن أن يكون الملف ضخماً — أنا أتعامل معه بكفاءة عالية!",
-        parse_mode=ParseMode.HTML
+        "📤 جاهز لاستقبال ملفك!\n\n"
+        "أرسل لي ملف نصي بصيغة .txt\n"
+        "✅ يمكن أن يكون الملف ضخماً — أنا أتعامل معه بكفاءة عالية!"
     )
 
+# ==================== رفع الملفات ====================
 @dp.message(F.document)
 async def handle_document(message: Message):
     user = message.from_user
     db.increment_message_count(user.id)
 
     if not message.document.file_name.endswith('.txt'):
-        await message.reply("❌ أقبل فقط ملفات <code>.txt</code>", parse_mode=ParseMode.HTML)
+        await message.reply("❌ أقبل فقط ملفات .txt")
         db.add_log(user.id, "upload_rejected", f"Wrong format: {message.document.file_name}")
+        return
+
+    # التحقق من حجم الملف (حد أقصى 20 ميجابايت)
+    max_size = 20 * 1024 * 1024  # 20 MB
+    if message.document.file_size > max_size:
+        await message.reply(
+            f"❌ الملف كبير جداً! الحد الأقصى هو 20 ميجابايت.\n"
+            f"📦 حجم ملفك: {message.document.file_size / (1024*1024):.2f} MB\n\n"
+            f"💡 استخدم /upload_link لرفع الملفات الكبيرة عبر رابط"
+        )
+        db.add_log(user.id, "upload_rejected", f"File too large: {message.document.file_size}")
         return
 
     user_folder = get_user_folder(user.id)
@@ -77,7 +113,7 @@ async def handle_document(message: Message):
         os.remove(file_path)
         db.delete_user_file(user.id, message.document.file_name)
 
-    msg = await message.reply("⏳ جاري تحميل الملف...", parse_mode=ParseMode.HTML)
+    msg = await message.reply("⏳ جاري تحميل الملف...")
 
     try:
         file = await bot.get_file(message.document.file_id)
@@ -89,18 +125,76 @@ async def handle_document(message: Message):
 
         size_mb = file_size / (1024 * 1024)
         await msg.edit_text(
-            f"✅ <b>تم رفع الملف بنجاح!</b>\n\n"
-            f"📄 الاسم: <code>{message.document.file_name}</code>\n"
-            f"📦 الحجم: <code>{size_mb:.2f} MB</code>\n\n"
+            f"✅ تم رفع الملف بنجاح!\n\n"
+            f"📄 الاسم: {message.document.file_name}\n"
+            f"📦 الحجم: {size_mb:.2f} MB\n\n"
             f"🔍 يمكنك البحث الآن باستخدام:\n"
-            f"<code>/search النص_المطلوب</code>",
-            parse_mode=ParseMode.HTML
+            f"/search النص_المطلوب"
         )
     except Exception as e:
         logging.error(f"Upload error for user {user.id}: {e}")
         await msg.edit_text("❌ حدث خطأ أثناء تحميل الملف. حاول مرة أخرى.")
         db.add_log(user.id, "upload_error", str(e))
 
+# ==================== أمر /upload_link ====================
+@dp.message(Command("upload_link"))
+async def cmd_upload_link(message: Message):
+    await message.reply(
+        "📎 أرسل رابط الملف بهذه الصيغة:\n"
+        "/upload_link https://example.com/file.txt\n\n"
+        "💡 ارفع الملف على أي خدمة تخزين وأرسل رابط التحميل المباشر."
+    )
+
+@dp.message(F.text & (F.text.startswith('/upload_link') | F.text.startswith('/ul')))
+async def handle_upload_link(message: Message):
+    user_id = message.from_user.id
+    args = message.text.split(maxsplit=1)
+    
+    if len(args) < 2:
+        await message.reply("❌ أرسل رابط التحميل بعد الأمر\nمثال: /upload_link https://example.com/file.txt")
+        return
+    
+    url = args[1].strip()
+    msg = await message.reply("⏳ جاري تحميل الملف من الرابط...")
+    
+    try:
+        import aiohttp
+        user_folder = get_user_folder(user_id)
+        file_name = url.split('/')[-1].split('?')[0] or "file.txt"
+        file_path = os.path.join(user_folder, file_name)
+        
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                if resp.status != 200:
+                    await msg.edit_text(f"❌ خطأ في التحميل: {resp.status}")
+                    return
+                
+                total_size = int(resp.headers.get('content-length', 0))
+                downloaded = 0
+                
+                with open(file_path, 'wb') as f:
+                    async for chunk in resp.content.iter_chunked(1024*1024):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                percent = int(downloaded / total_size * 100)
+                                if percent % 10 == 0:
+                                    await msg.edit_text(f"⏳ جاري التحميل... {percent}%")
+        
+        file_size = os.path.getsize(file_path)
+        db.add_file(user_id, file_name, file_path, file_size)
+        
+        await msg.edit_text(
+            f"✅ تم رفع الملف بنجاح!\n"
+            f"📄 الاسم: {file_name}\n"
+            f"📦 الحجم: {file_size/(1024**2):.2f} MB"
+        )
+        
+    except Exception as e:
+        await msg.edit_text(f"❌ خطأ: {str(e)[:200]}")
+
+# ==================== أمر /search ====================
 @dp.message(Command("search"))
 async def cmd_search(message: Message):
     user_id = message.from_user.id
@@ -109,11 +203,10 @@ async def cmd_search(message: Message):
     args = message.text.split(maxsplit=1)
     if len(args) < 2:
         await message.reply(
-            "❌ <b>استخدام خاطئ</b>\n\n"
+            "❌ استخدام خاطئ\n\n"
             "الصيغة الصحيحة:\n"
-            "<code>/search النص_المطلوب</code>\n\n"
-            "مثال:\n<code>/search مرحبا بالعالم</code>",
-            parse_mode=ParseMode.HTML
+            "/search النص_المطلوب\n\n"
+            "مثال:\n/search مرحبا بالعالم"
         )
         return
 
@@ -127,7 +220,7 @@ async def cmd_search(message: Message):
         await message.reply("❌ ليس لديك ملفات مرفوعة. أرسل ملفاً أولاً باستخدام /upload")
         return
 
-    msg = await message.reply(f"🔍 جاري البحث عن: <code>{query}</code>...", parse_mode=ParseMode.HTML)
+    msg = await message.reply(f"🔍 جاري البحث عن: {query}...")
 
     try:
         searcher = LargeTextSearcher(user_folder)
@@ -138,10 +231,9 @@ async def cmd_search(message: Message):
 
         if total_results == 0:
             await msg.edit_text(
-                f"😕 <b>لم أجد نتائج</b>\n\n"
-                f"⏱️ الوقت: <code>{time_taken:.4f} ثانية</code>\n"
-                f"📦 البيانات المُعالجة: <code>{total_data_processed / (1024**2):.2f} MB</code>",
-                parse_mode=ParseMode.HTML
+                f"😕 لم أجد نتائج\n\n"
+                f"⏱️ الوقت: {time_taken:.4f} ثانية\n"
+                f"📦 البيانات المُعالجة: {total_data_processed / (1024**2):.2f} MB"
             )
             return
 
@@ -157,11 +249,10 @@ async def cmd_search(message: Message):
                     f.write(f"{i}. {line}\n")
 
             await msg.edit_text(
-                f"✅ <b>تم العثور على {total_results} نتيجة</b>\n\n"
-                f"⏱️ الوقت: <code>{time_taken:.4f} ثانية</code>\n"
-                f"📦 البيانات: <code>{total_data_processed / (1024**2):.2f} MB</code>\n"
-                f"📄 النتائج كثيرة، أرسلها لك في ملف...",
-                parse_mode=ParseMode.HTML
+                f"✅ تم العثور على {total_results} نتيجة\n\n"
+                f"⏱️ الوقت: {time_taken:.4f} ثانية\n"
+                f"📦 البيانات: {total_data_processed / (1024**2):.2f} MB\n"
+                f"📄 النتائج كثيرة، أرسلها لك في ملف..."
             )
             await message.reply_document(FSInputFile(result_file), caption=f"🔍 نتائج البحث: {query}")
         else:
@@ -170,11 +261,10 @@ async def cmd_search(message: Message):
                 text_results = text_results[:3500] + "\n\n... (تم اقتصاص الباقي)"
 
             await msg.edit_text(
-                f"✅ <b>تم العثور على {total_results} نتيجة</b>\n\n"
-                f"⏱️ الوقت: <code>{time_taken:.4f} ثانية</code>\n"
-                f"📦 البيانات: <code>{total_data_processed / (1024**2):.2f} MB</code>\n\n"
-                f"📝 <b>النتائج:</b>\n{text_results}",
-                parse_mode=ParseMode.HTML
+                f"✅ تم العثور على {total_results} نتيجة\n\n"
+                f"⏱️ الوقت: {time_taken:.4f} ثانية\n"
+                f"📦 البيانات: {total_data_processed / (1024**2):.2f} MB\n\n"
+                f"📝 النتائج:\n{text_results}"
             )
 
     except Exception as e:
@@ -182,6 +272,7 @@ async def cmd_search(message: Message):
         await msg.edit_text("❌ حدث خطأ أثناء البحث. حاول مرة أخرى.")
         db.add_log(user_id, "search_error", str(e))
 
+# ==================== أمر /myfiles ====================
 @dp.message(Command("myfiles"))
 async def cmd_myfiles(message: Message):
     user_id = message.from_user.id
@@ -192,16 +283,17 @@ async def cmd_myfiles(message: Message):
         await message.reply("📂 ليس لديك ملفات مرفوعة.")
         return
 
-    text = "📂 <b>ملفاتك المرفوعة:</b>\n\n"
+    text = "📂 ملفاتك المرفوعة:\n\n"
     total_size = 0
     for i, f in enumerate(files, 1):
         size_mb = f['file_size'] / (1024 * 1024)
         total_size += f['file_size']
-        text += f"{i}. <code>{f['filename']}</code> ({size_mb:.2f} MB)\n"
+        text += f"{i}. {f['filename']} ({size_mb:.2f} MB)\n"
 
-    text += f"\n📊 الإجمالي: <code>{len(files)}</code> ملف | <code>{total_size / (1024**2):.2f} MB</code>"
-    await message.reply(text, parse_mode=ParseMode.HTML)
+    text += f"\n📊 الإجمالي: {len(files)} ملف | {total_size / (1024**2):.2f} MB"
+    await message.reply(text)
 
+# ==================== أمر /status ====================
 @dp.message(Command("status"))
 async def cmd_status(message: Message):
     user_id = message.from_user.id
@@ -213,18 +305,19 @@ async def cmd_status(message: Message):
         return
 
     text = (
-        f"👤 <b>حالة حسابك</b>\n\n"
-        f"🆔 المعرف: <code>{stats['telegram_id']}</code>\n"
+        f"👤 حالة حسابك\n\n"
+        f"🆔 المعرف: {stats['telegram_id']}\n"
         f"👤 الاسم: {stats['first_name']} {stats['last_name'] or ''}\n"
         f"📧 اليوزر: @{stats['username'] or '—'}\n"
         f"📅 تاريخ الانضمام: {stats['joined_at']}\n\n"
-        f"📨 الرسائل المرسلة: <code>{stats['message_count']}</code>\n"
-        f"📤 الملفات المرفوعة: <code>{stats['file_count']}</code>\n"
-        f"🔍 عمليات البحث: <code>{stats['search_count']}</code>\n"
+        f"📨 الرسائل المرسلة: {stats['message_count']}\n"
+        f"📤 الملفات المرفوعة: {stats['file_count']}\n"
+        f"🔍 عمليات البحث: {stats['search_count']}\n"
         f"🕐 آخر نشاط: {stats['last_activity']}"
     )
-    await message.reply(text, parse_mode=ParseMode.HTML)
+    await message.reply(text)
 
+# ==================== أمر /stats ====================
 @dp.message(Command("stats"))
 async def cmd_stats(message: Message):
     user_id = message.from_user.id
@@ -236,23 +329,80 @@ async def cmd_stats(message: Message):
 
     stats = db.get_stats()
     text = (
-        f"📊 <b>إحصائيات البوت الكاملة</b>\n\n"
-        f"👥 إجمالي المستخدمين: <code>{stats['users_count']}</code>\n"
-        f"📤 الملفات المرفوعة: <code>{stats['files_count']}</code>\n"
-        f"🔍 عمليات البحث: <code>{stats['searches_count']}</code>\n"
-        f"💾 إجمالي الحجم المخزن: <code>{stats['total_size'] / (1024**3):.2f} GB</code>"
+        f"📊 إحصائيات البوت الكاملة\n\n"
+        f"👥 إجمالي المستخدمين: {stats['users_count']}\n"
+        f"📤 الملفات المرفوعة: {stats['files_count']}\n"
+        f"🔍 عمليات البحث: {stats['searches_count']}\n"
+        f"💾 إجمالي الحجم المخزن: {stats['total_size'] / (1024**3):.2f} GB"
     )
-    await message.reply(text, parse_mode=ParseMode.HTML)
+    await message.reply(text)
 
+# ==================== أمر خاص لرفع الملف الموجود ====================
+@dp.message(Command("addfile"))
+async def cmd_addfile(message: Message):
+    user_id = message.from_user.id
+    
+    # التأكد من أن المستخدم مشرف
+    if user_id not in ADMIN_IDS:
+        await message.reply("⛔ هذا الأمر للمشرفين فقط.")
+        return
+    
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply(
+            "❌ استخدم الأمر بهذه الصيغة:\n"
+            "/addfile /path/to/file.txt\n\n"
+            "مثال: /addfile /home/ec2-user/bot/uploads/ulp.txt"
+        )
+        return
+    
+    file_path = args[1].strip()
+    
+    if not os.path.exists(file_path):
+        await message.reply(f"❌ الملف غير موجود: {file_path}")
+        return
+    
+    if not file_path.endswith('.txt'):
+        await message.reply("❌ الملف يجب أن يكون بصيغة .txt")
+        return
+    
+    try:
+        file_name = os.path.basename(file_path)
+        user_folder = get_user_folder(user_id)
+        dest_path = os.path.join(user_folder, file_name)
+        
+        # نسخ الملف إلى مجلد المستخدم
+        import shutil
+        shutil.copy2(file_path, dest_path)
+        
+        file_size = os.path.getsize(dest_path)
+        
+        # حذف الملف القديم إذا كان موجوداً
+        db.delete_user_file(user_id, file_name)
+        
+        # إضافة الملف إلى قاعدة البيانات
+        db.add_file(user_id, file_name, dest_path, file_size)
+        
+        await message.reply(
+            f"✅ تم رفع الملف بنجاح!\n"
+            f"📄 الاسم: {file_name}\n"
+            f"📦 الحجم: {file_size/(1024**2):.2f} MB\n"
+            f"📍 المسار: {dest_path}"
+        )
+        
+    except Exception as e:
+        await message.reply(f"❌ خطأ: {str(e)[:200]}")
+
+# ==================== الرسائل غير المعروفة ====================
 @dp.message()
 async def handle_any_message(message: Message):
     db.increment_message_count(message.from_user.id)
     await message.reply(
         "❓ لم أفهم طلبك.\n\n"
-        "استخدم /help لمعرفة الأوامر المتاحة.",
-        parse_mode=ParseMode.HTML
+        "استخدم /help لمعرفة الأوامر المتاحة."
     )
 
+# ==================== تشغيل البوت ====================
 async def main():
     await dp.start_polling(bot)
 

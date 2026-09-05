@@ -30,27 +30,8 @@ def get_user_folder(user_id: int) -> str:
     os.makedirs(folder, exist_ok=True)
     return folder
 
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    user = message.from_user
-    db.add_or_update_user(user.id, user.username or "", user.first_name or "", user.last_name or "")
-    db.add_log(user.id, "start", "User started bot")
+folder
 
-    welcome_text = (
-        f"👋 أهلاً وسهلاً <b>{user.first_name}</b>!\n\n"
-        f"🤖 أنا بوت البحث المتقدم في الملفات النصية الكبيرة.\n\n"
-        f"📋 <b>الأوامر المتاحة:</b>\n"
-        f"/upload - طلب رفع ملف .txt\n"
-        f"/search <نص> - البحث في ملفاتك\n"
-        f"/myfiles - عرض ملفاتك المرفوعة\n"
-        f"/status - إحصائيات حسابك\n"
-        f"/help - المساعدة\n\n"
-        f"📎 <b>طريقة الاستخدام:</b>\n"
-        f"1. أرسل لي ملف .txt مباشرة أو استخدم /upload\n"
-        f"2. استخدم /search متبوعاً بالنص المطلوب\n"
-        f"3. سأرسل لك النتائج فوراً!"
-    )
-    await message.reply(welcome_text, parse_mode=ParseMode.HTML)
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):

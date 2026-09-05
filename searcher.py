@@ -3,7 +3,6 @@ import mmap
 import time
 import logging
 import concurrent.futures
-import psutil
 import multiprocessing 
 from typing import List, Tuple
 
@@ -13,17 +12,17 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S %z'
 )
 
-CHUNK_SIZE = 4 * 1024 * 1024 * 1024 
-RESULT_FOLDER = "results"  
+CHUNK_SIZE = 4 * 1024 * 1024 * 1024  # 4GB
 
 class LargeTextSearcher:
-    def __init__(self, upload_folder: str, chunk_size: int = CHUNK_SIZE, max_ram_usage: int = 13 * 1024 * 1024 * 1024):
+    def __init__(self, upload_folder: str, chunk_size: int = CHUNK_SIZE, 
+                 max_ram_usage: int = 13 * 1024 * 1024 * 1024,
+                 results_folder: str = "results"):
         self.upload_folder = upload_folder
         self.chunk_size = chunk_size
-        self.max_ram_usage = max_ram_usage 
-
-        if not os.path.exists(RESULT_FOLDER):
-            os.makedirs(RESULT_FOLDER)
+        self.max_ram_usage = max_ram_usage
+        self.results_folder = results_folder
+        os.makedirs(self.results_folder, exist_ok=True)
 
     def search_worker(self, file_path: str, start_position: int, end_position: int, filter_bytes: bytes) -> Tuple[List[str], int]:
         results = []
@@ -35,13 +34,11 @@ class LargeTextSearcher:
                     chunk = mm.read(end_position - start_position)
                     chunk_size = len(chunk)
                     lines = chunk.split(b'\n')
-
                     for line in lines:
                         if filter_bytes in line.lower():
                             results.append(line.decode('utf-8', errors='ignore').strip())
-
         except Exception as e:
-            logging.error(f"Error en search_worker: {e}")
+            logging.error(f"Error in search_worker: {e}")
         return results, chunk_size
 
     async def async_query_files(self, filter_text: str) -> Tuple[List[str], float, int, int]:
@@ -51,6 +48,8 @@ class LargeTextSearcher:
         filter_bytes = filter_text.lower().encode('utf-8', errors='ignore')
 
         files = [f for f in os.listdir(self.upload_folder) if f.endswith('.txt')]
+        if not files:
+            return [], 0.0, 0, 0
 
         for filename in files:
             file_path = os.path.join(self.upload_folder, filename)
@@ -58,9 +57,10 @@ class LargeTextSearcher:
             logging.info(f"Processing file: {filename} (size: {file_size // (1024**2)} MB)")
 
             file_start_time = time.time()
-
             ram_per_thread = self.chunk_size
             max_threads = min(multiprocessing.cpu_count(), self.max_ram_usage // ram_per_thread)
+            if max_threads < 1:
+                max_threads = 1
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=max_threads) as executor:
                 chunk_positions = [(start, min(start + self.chunk_size, file_size))
@@ -74,20 +74,17 @@ class LargeTextSearcher:
                     total_data_processed += chunk_size
 
             file_elapsed_time = time.time() - file_start_time
-            logging.info(f"Processed file: {filename} - Time: {file_elapsed_time:.2f} seconds - "
-                         f"Size: {total_data_processed // (1024**2)} MB - Results: {len(chunk_results)}")
+            logging.info(f"Processed file: {filename} - Time: {file_elapsed_time:.2f}s - Results: {len(chunk_results)}")
 
         elapsed_time = time.time() - start_time
         total_results = len(all_results)
-        logging.info(f"Search completed in {elapsed_time:.2f} seconds. Total data processed: "
-                     f"{total_data_processed // (1024**2)} MB. Total results: {total_results}")
-
+        logging.info(f"Search completed in {elapsed_time:.2f}s. Data: {total_data_processed // (1024**2)} MB. Results: {total_results}")
         self.save_results(filter_text, all_results)
-
         return all_results, elapsed_time, total_data_processed, total_results
 
     def save_results(self, filter_text: str, results: List[str]):
-        file_name = os.path.join(RESULT_FOLDER, f"{filter_text}.txt")
+        safe_name = "".join(c for c in filter_text if c.isalnum() or c in (' ', '-', '_')).rstrip()
+        file_name = os.path.join(self.results_folder, f"{safe_name}.txt")
         with open(file_name, 'w', encoding='utf-8') as f:
             for line in results:
                 f.write(line + '\n')

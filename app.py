@@ -30,8 +30,6 @@ def get_user_folder(user_id: int) -> str:
     os.makedirs(folder, exist_ok=True)
     return folder
 
-folder
-
 
 @dp.message(Command("help"))
 async def cmd_help(message: Message):

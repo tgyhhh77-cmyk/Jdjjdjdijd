@@ -46,7 +46,7 @@ async def cmd_start(message: Message):
         f"/myfiles - عرض ملفاتك المرفوعة\n"
         f"/status - إحصائيات حسابك\n"
         f"/help - المساعدة\n"
-        f"/upload_link - رفع ملف عبر رابط\n\n"
+        f"/addfile - رفع ملف موجود على السيرفر\n\n"
         f"📎 طريقة الاستخدام:\n"
         f"1. أرسل لي ملف .txt مباشرة أو استخدم /upload\n"
         f"2. استخدم /search متبوعاً بالنص المطلوب\n"
@@ -70,7 +70,8 @@ async def cmd_help(message: Message):
         "• /myfiles - قائمة ملفاتك\n"
         "• /status - إحصائياتك الشخصية\n\n"
         "👨‍💼 للمشرفين:\n"
-        "• /stats - إحصائيات البوت الكاملة"
+        "• /stats - إحصائيات البوت الكاملة\n"
+        "• /addfile /path/to/file.txt - رفع ملف من السيرفر"
     )
     await message.reply(help_text)
 
@@ -95,13 +96,11 @@ async def handle_document(message: Message):
         db.add_log(user.id, "upload_rejected", f"Wrong format: {message.document.file_name}")
         return
 
-    # التحقق من حجم الملف (حد أقصى 20 ميجابايت)
-    max_size = 20 * 1024 * 1024  # 20 MB
+    max_size = 20 * 1024 * 1024
     if message.document.file_size > max_size:
         await message.reply(
             f"❌ الملف كبير جداً! الحد الأقصى هو 20 ميجابايت.\n"
-            f"📦 حجم ملفك: {message.document.file_size / (1024*1024):.2f} MB\n\n"
-            f"💡 استخدم /upload_link لرفع الملفات الكبيرة عبر رابط"
+            f"📦 حجم ملفك: {message.document.file_size / (1024*1024):.2f} MB"
         )
         db.add_log(user.id, "upload_rejected", f"File too large: {message.document.file_size}")
         return
@@ -136,63 +135,60 @@ async def handle_document(message: Message):
         await msg.edit_text("❌ حدث خطأ أثناء تحميل الملف. حاول مرة أخرى.")
         db.add_log(user.id, "upload_error", str(e))
 
-# ==================== أمر /upload_link ====================
-@dp.message(Command("upload_link"))
-async def cmd_upload_link(message: Message):
-    await message.reply(
-        "📎 أرسل رابط الملف بهذه الصيغة:\n"
-        "/upload_link https://example.com/file.txt\n\n"
-        "💡 ارفع الملف على أي خدمة تخزين وأرسل رابط التحميل المباشر."
-    )
-
-@dp.message(F.text & (F.text.startswith('/upload_link') | F.text.startswith('/ul')))
-async def handle_upload_link(message: Message):
+# ==================== أمر /addfile ====================
+@dp.message(Command("addfile"))
+async def cmd_addfile(message: Message):
     user_id = message.from_user.id
-    args = message.text.split(maxsplit=1)
     
-    if len(args) < 2:
-        await message.reply("❌ أرسل رابط التحميل بعد الأمر\nمثال: /upload_link https://example.com/file.txt")
+    if user_id not in ADMIN_IDS:
+        await message.reply("⛔ هذا الأمر للمشرفين فقط.")
         return
     
-    url = args[1].strip()
-    msg = await message.reply("⏳ جاري تحميل الملف من الرابط...")
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2:
+        await message.reply(
+            "❌ استخدم الأمر بهذه الصيغة:\n"
+            "/addfile /path/to/file.txt\n\n"
+            "مثال: /addfile /home/ec2-user/bot/uploads/ulp.txt"
+        )
+        return
+    
+    file_path = args[1].strip()
+    
+    if not os.path.exists(file_path):
+        await message.reply(f"❌ الملف غير موجود: {file_path}")
+        return
+    
+    if not file_path.endswith('.txt'):
+        await message.reply("❌ الملف يجب أن يكون بصيغة .txt")
+        return
     
     try:
-        import aiohttp
+        file_name = os.path.basename(file_path)
         user_folder = get_user_folder(user_id)
-        file_name = url.split('/')[-1].split('?')[0] or "file.txt"
-        file_path = os.path.join(user_folder, file_name)
+        dest_path = os.path.join(user_folder, file_name)
         
-        async with aiohttp.ClientSession() as session:
-            async with session.get(url) as resp:
-                if resp.status != 200:
-                    await msg.edit_text(f"❌ خطأ في التحميل: {resp.status}")
-                    return
-                
-                total_size = int(resp.headers.get('content-length', 0))
-                downloaded = 0
-                
-                with open(file_path, 'wb') as f:
-                    async for chunk in resp.content.iter_chunked(1024*1024):
-                        if chunk:
-                            f.write(chunk)
-                            downloaded += len(chunk)
-                            if total_size > 0:
-                                percent = int(downloaded / total_size * 100)
-                                if percent % 10 == 0:
-                                    await msg.edit_text(f"⏳ جاري التحميل... {percent}%")
+        import shutil
+        shutil.copy2(file_path, dest_path)
         
-        file_size = os.path.getsize(file_path)
-        db.add_file(user_id, file_name, file_path, file_size)
+        file_size = os.path.getsize(dest_path)
         
-        await msg.edit_text(
+        if file_size == 0:
+            await message.reply("❌ الملف فارغ (0 بايت)! تأكد من الملف الصحيح.")
+            os.remove(dest_path)
+            return
+        
+        db.delete_user_file(user_id, file_name)
+        db.add_file(user_id, file_name, dest_path, file_size)
+        
+        await message.reply(
             f"✅ تم رفع الملف بنجاح!\n"
             f"📄 الاسم: {file_name}\n"
             f"📦 الحجم: {file_size/(1024**2):.2f} MB"
         )
         
     except Exception as e:
-        await msg.edit_text(f"❌ خطأ: {str(e)[:200]}")
+        await message.reply(f"❌ خطأ: {str(e)[:200]}")
 
 # ==================== أمر /search ====================
 @dp.message(Command("search"))
@@ -217,7 +213,7 @@ async def cmd_search(message: Message):
 
     user_folder = get_user_folder(user_id)
     if not os.path.exists(user_folder) or not os.listdir(user_folder):
-        await message.reply("❌ ليس لديك ملفات مرفوعة. أرسل ملفاً أولاً باستخدام /upload")
+        await message.reply("❌ ليس لديك ملفات مرفوعة. أرسل ملفاً أولاً.")
         return
 
     msg = await message.reply(f"🔍 جاري البحث عن: {query}...")
@@ -336,62 +332,6 @@ async def cmd_stats(message: Message):
         f"💾 إجمالي الحجم المخزن: {stats['total_size'] / (1024**3):.2f} GB"
     )
     await message.reply(text)
-
-# ==================== أمر خاص لرفع الملف الموجود ====================
-@dp.message(Command("addfile"))
-async def cmd_addfile(message: Message):
-    user_id = message.from_user.id
-    
-    # التأكد من أن المستخدم مشرف
-    if user_id not in ADMIN_IDS:
-        await message.reply("⛔ هذا الأمر للمشرفين فقط.")
-        return
-    
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2:
-        await message.reply(
-            "❌ استخدم الأمر بهذه الصيغة:\n"
-            "/addfile /path/to/file.txt\n\n"
-            "مثال: /addfile /home/ec2-user/bot/uploads/ulp.txt"
-        )
-        return
-    
-    file_path = args[1].strip()
-    
-    if not os.path.exists(file_path):
-        await message.reply(f"❌ الملف غير موجود: {file_path}")
-        return
-    
-    if not file_path.endswith('.txt'):
-        await message.reply("❌ الملف يجب أن يكون بصيغة .txt")
-        return
-    
-    try:
-        file_name = os.path.basename(file_path)
-        user_folder = get_user_folder(user_id)
-        dest_path = os.path.join(user_folder, file_name)
-        
-        # نسخ الملف إلى مجلد المستخدم
-        import shutil
-        shutil.copy2(file_path, dest_path)
-        
-        file_size = os.path.getsize(dest_path)
-        
-        # حذف الملف القديم إذا كان موجوداً
-        db.delete_user_file(user_id, file_name)
-        
-        # إضافة الملف إلى قاعدة البيانات
-        db.add_file(user_id, file_name, dest_path, file_size)
-        
-        await message.reply(
-            f"✅ تم رفع الملف بنجاح!\n"
-            f"📄 الاسم: {file_name}\n"
-            f"📦 الحجم: {file_size/(1024**2):.2f} MB\n"
-            f"📍 المسار: {dest_path}"
-        )
-        
-    except Exception as e:
-        await message.reply(f"❌ خطأ: {str(e)[:200]}")
 
 # ==================== الرسائل غير المعروفة ====================
 @dp.message()
